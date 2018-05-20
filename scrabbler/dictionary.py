@@ -140,6 +140,9 @@ class Edge(object):
         if type(self._node) == str:
             print("the node is :" + self._node)
 
+    def __contains__(self, char):
+        return char in self._letter_set
+
     def __eq__(self, other):
         return other == self._char
 
