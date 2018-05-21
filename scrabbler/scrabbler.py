@@ -2,13 +2,16 @@ import os
 import pickle
 import string
 import json
+import gzip
 from enum import Enum
 from scrabbler.dictionary import Dictionary
 import utilities.logger as logger
+import utilities.errors as errors
 
 script_dir = os.path.dirname(__file__)
 full_tile_path = os.path.join(script_dir, "../resources/tile_list.txt")
 full_board_path = os.path.join(script_dir, "../resources/board.json")
+full_saved_games_dir = os.path.join(script_dir, "../games/")
 
 
 class Game(object):
@@ -82,7 +85,7 @@ class Square(object):
         elif direction == CrossSetDirection.VERTICAL:
             self._cross_set['vertical'] = cross_set
         else:
-            logger.error("The direction provided (" + direction + ") is invalid")
+            raise errors.InvalidInputError("The direction provided (" + direction + ") is invalid")
 
     def get_cross_set(self, direction):
         direction_string = ""
@@ -91,7 +94,7 @@ class Square(object):
         elif direction == CrossSetDirection.VERTICAL:
             direction_string = 'vertical'
         else:
-            logger.error("The direction provided (" + direction + ") is invalid")
+            raise errors.InvalidInputError("The direction provided (" + direction + ") is invalid")
         if self._cross_set[direction_string]:
             return self._cross_set[direction_string]
         else:
