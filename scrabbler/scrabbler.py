@@ -64,19 +64,38 @@ class Square(object):
         self._cross_set = None
         self._tile = None
         self._attribute = SquareAttribute.NULL
+        self._cross_set = {'vertical': None,
+                           'horizontal': None}
 
     def set_attribute(self, attribute):
         self._attribute = attribute
 
-    def get_cross_set(self, direction):
-        if not self._cross_set:
-            return list(string.ascii_lowercase)
+    def has_tile(self):
+        return self._tile is not None
+
+    def get_tile(self):
+        return self._tile
+
+    def update_cross_set(self, direction, cross_set):
         if direction == CrossSetDirection.HORIZONTAL:
-            return self._cross_set['horizontal']
+            self._cross_set['horizontal'] = cross_set
         elif direction == CrossSetDirection.VERTICAL:
-            return self._cross_set['vertical']
+            self._cross_set['vertical'] = cross_set
         else:
             logger.error("The direction provided (" + direction + ") is invalid")
+
+    def get_cross_set(self, direction):
+        direction_string = ""
+        if direction == CrossSetDirection.HORIZONTAL:
+            direction_string = 'horizontal'
+        elif direction == CrossSetDirection.VERTICAL:
+            direction_string = 'vertical'
+        else:
+            logger.error("The direction provided (" + direction + ") is invalid")
+        if self._cross_set[direction_string]:
+            return self._cross_set[direction_string]
+        else:
+            return list(string.ascii_lowercase)
 
 
 class SquareAttribute(Enum):
