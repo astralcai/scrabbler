@@ -4,7 +4,7 @@ import string
 import json
 import gzip
 from enum import Enum
-from scrabbler.dictionary import Dictionary, DELIMITER
+from scrabbler.dictionary import Dictionary, DELIMITER, Arc
 import utilities.logger as logger
 import utilities.errors as errors
 
@@ -74,13 +74,26 @@ class Game:
         coordinate = start_square
         for _ in word:
             self.board.update_cross_set(coordinate, other_direction, self.dictionary)
-            coordinate = self.board.increment(coordinate, direction, 1)
+            coordinate = self.board.offset(coordinate, direction, 1)
+
+    def find_best_moves(self, rack, first=False):
+        """returns the five best moves"""
+        rack = list(rack)
+        if first:
+            moves = self.board.generate_moves((7, 7), "across", rack, self.dictionary, self.tiles)
+            moves.sort(key=lambda move: move.score, reverse=True)
+            return list(str(move) for move in moves[0:5])
+        across_moves = self.board.find_best_moves(rack, "across", self.dictionary, self.tiles)
+        down_moves = self.board.find_best_moves(rack, "down", self.dictionary, self.tiles)
+        moves = across_moves + down_moves
+        moves.sort(key=lambda move: move.score, reverse=True)
+        return list(str(move) for move in moves[0:5])
 
     @staticmethod
     def __load_tile_set_from_file(filename) -> dict:
         with open(filename) as f:
             tiles = f.readlines()  # ['A 1\n', 'B 4\n', 'C 4\n', 'D 2\n', ...]
-        return dict((tile[0], tile[-2]) for tile in tiles)  # {'A': '1', 'B': '4', 'C': '4', ...}
+        return dict((tile[0], int(tile[2:-1])) for tile in tiles)  # {'A': '1', 'B': '4', 'C': '4', ...}
 
     @staticmethod
     def __load_board_from_file(filename) -> "Board":
@@ -103,13 +116,13 @@ class Board:
 
         special_squares = board_data['special_squares']
         for coordinate in special_squares['DL']:
-            self.square(*coordinate).attribute = SquareAttribute.DL
+            self.square(*coordinate).effect = SquareEffect.DL
         for coordinate in special_squares['DW']:
-            self.square(*coordinate).attribute = SquareAttribute.DW
+            self.square(*coordinate).effect = SquareEffect.DW
         for coordinate in special_squares['TL']:
-            self.square(*coordinate).attribute = SquareAttribute.TL
+            self.square(*coordinate).effect = SquareEffect.TL
         for coordinate in special_squares['TW']:
-            self.square(*coordinate).attribute = SquareAttribute.TW
+            self.square(*coordinate).effect = SquareEffect.TW
 
     def square(self, row, col):
         """gets the square on the given coordinate, return None if out of bounds"""
@@ -119,49 +132,150 @@ class Board:
     def place_word(self, start_coordinate, word, direction):
         """puts a word on the board"""
 
-        end_coordinate = self.increment(start_coordinate, direction, len(word))
-        if any(index < self.size for index in end_coordinate):
+        end_coordinate = self.offset(start_coordinate, direction, len(word))
+        if any(index > self.size for index in end_coordinate):
             raise errors.IllegalMoveError("The length of word is out of bounds of the board")
 
         coordinate = start_coordinate
         offset = 0
+        word = word.upper()
         try:
             for char in word:
                 self.square(*coordinate).tile = char
                 offset = offset + 1
-                coordinate = self.increment(start_coordinate, direction, offset)
+                coordinate = self.offset(start_coordinate, direction, offset)
         except errors.IllegalMoveError:
             offset = offset - 1
             while offset >= 0:
                 self.square(*coordinate).remove_tile()
                 offset = offset - 1
-                coordinate = self.increment(start_coordinate, direction, offset)
+                coordinate = self.offset(start_coordinate, direction, offset)
             raise errors.IllegalMoveError("Cannot place this word on the given coordinates")
+
+    def generate_moves(self, anchor, direction, rack, dictionary, tile_set):
+        """generate all possible moves from a given anchor with the current rack"""
+
+        from copy import deepcopy
+
+        plays = []
+
+        def gen(pos_, word_, rack_, arc_, score_count_, effects_):
+
+            rack_ = deepcopy(rack_)
+            effects_ = deepcopy(effects_)
+
+            coordinate_ = self.offset(anchor, direction, pos_)
+            tile_ = self.square(*coordinate_).tile
+            if tile_:
+                new_score = score_count_ + tile_set[tile_]
+                go_on(pos_, tile_, word_, rack_, arc_.get_next(tile_), arc_, new_score, effects_)
+            elif rack_:
+                other_direction = "down" if direction == "across" else "across"
+                for letter_ in (x for x in rack_ if x in self.square(*coordinate_).cross_set(other_direction)):
+                    tmp_rack_ = deepcopy(rack_)
+                    tmp_rack_.remove(letter_)
+                    tmp_effects = deepcopy(effects_)
+                    effect = self.square(*coordinate_).effect
+                    tile_score = tile_set[letter_]
+                    if effect == SquareEffect.DL:
+                        tile_score = tile_score * 2
+                    elif effect == SquareEffect.TL:
+                        tile_score = tile_score * 3
+                    elif effect in [SquareEffect.DW, SquareEffect.TW]:
+                        tmp_effects.append(effect)
+                    new_score = score_count_ + tile_score
+                    go_on(pos_, letter_, word_, tmp_rack_, arc_.get_next(letter_), arc_, new_score, tmp_effects)
+                if "?" in rack_:
+                    for letter_ in (x for x in set(string.ascii_lowercase) if
+                                    x in self.square(*coordinate_).cross_set(other_direction)):
+                        tmp_rack_ = deepcopy(rack_)
+                        tmp_rack_.remove(letter_)
+                        tmp_effects = deepcopy(effects_)
+                        effect = self.square(*coordinate_).effect
+                        if effect in [SquareEffect.DW, SquareEffect.TW]:
+                            tmp_effects.append(effect)
+                        go_on(pos_, letter_, word_, tmp_rack_, arc_.get_next(letter_), arc_, score_count_, tmp_effects)
+
+        def go_on(pos_, char_, word_, rack_, new_arc_, old_arc_, score_count_, effects_):
+
+            directly_left = self.offset(anchor, direction, pos_ - 1)
+            directly_left_square = self.square(*directly_left)
+            directly_right = self.offset(anchor, direction, pos_ + 1)
+            directly_right_square = self.square(*directly_right)
+
+            if pos_ <= 0:
+                word_ = char_ + word_
+                left_good = not directly_left_square or not directly_left_square.tile
+                if char_ in old_arc_.letter_set and left_good:
+                    record_play(pos_, word_, score_count_, effects_)
+                if new_arc_:
+                    if directly_left_square:
+                        gen(pos_ - 1, word_, rack_, new_arc_, score_count_, effects_)
+                    new_arc_ = new_arc_.get_next(DELIMITER)
+                    if new_arc_ and left_good and directly_right_square:
+                        gen(1, word_, rack_, new_arc_, score_count_, effects_)
+            else:
+                word_ = word_ + char_
+                right_good = not directly_right_square or not directly_right_square.tile
+                if char_ in old_arc_.letter_set and right_good:
+                    left_most = pos_ - len(word_) + 1
+                    record_play(left_most, word_, score_count_, effects_)
+                if new_arc_ and directly_right_square:
+                    gen(pos_ + 1, word_, rack_, new_arc_, score_count_, effects_)
+
+        def record_play(offset_, word_, score_, effects_):
+            start_square = self.offset(anchor, direction, offset_)
+            for effect_ in effects_:
+                if effect_ == SquareEffect.TW:
+                    score_ = score_ * 3
+                elif effect_ == SquareEffect.DW:
+                    score_ = score_ * 2
+            plays.append(Move(word_, start_square, direction, score_))
+
+        initial_arc = Arc("", dictionary.root)
+        gen(0, "", deepcopy(rack), initial_arc, 0, [])
+
+        return plays
+
+    def find_best_moves(self, rack, direction, dictionary, tile_set):
+        moves = []
+        other_direction = "across" if direction == "down" else "down"
+        corner = (0, 0)
+        for i in range(self.size - 1):
+            left_most = self.offset(corner, other_direction, i)
+            if self.square(*left_most).tile:
+                moves.extend(self.generate_moves(left_most, direction, rack, dictionary, tile_set))
+            for j in range(self.size - 1):
+                current = self.offset(left_most, direction, j)
+                next_square = self.offset(current, direction, 1)
+                if not self.square(*current).tile and self.square(*next_square).tile:
+                    moves.extend(self.generate_moves(next_square, direction, rack, dictionary, tile_set))
+        return moves
 
     def update_cross_set(self, start_coordinate, direction, dictionary):
         """update cross sets affected by this coordinate"""
 
         def __clear_cross_sets(start_coordinate_, direction_):
             right_most_square = self.fast_forward(start_coordinate_, direction_, 1)
-            right_square_ = self.increment(right_most_square, direction_, 1)
+            right_square_ = self.offset(right_most_square, direction_, 1)
             if self.square(*right_square_):
                 self.square(*right_square_).set_cross_set(direction_, {})
             left_most_square = self.fast_forward(start_coordinate_, direction_, -1)
-            left_square_ = self.increment(left_most_square, direction_, -1)
+            left_square_ = self.offset(left_most_square, direction_, -1)
             if self.square(*left_square_):
                 self.square(*left_square_).set_cross_set(direction_, {})
 
         def __check_candidate(coordinate_, candidate_, direction_, step):
             last_arc_ = candidate_
             state_ = candidate_.destination
-            next_square_ = self.increment(coordinate_, direction_, step)
+            next_square_ = self.offset(coordinate_, direction_, step)
             while self.square(*next_square_) and self.square(*next_square_).tile:
                 coordinate_ = next_square_
                 last_arc_ = state_.arcs[self.square(*coordinate_).tile]
                 state_ = last_arc_.destination
                 if not state:
                     return False
-                next_square_ = self.increment(coordinate_, direction_, step)
+                next_square_ = self.offset(coordinate_, direction_, step)
             return self.square(*coordinate_).tile in last_arc_.letter_set
 
         if not self.square(*start_coordinate) or not self.square(*start_coordinate).tile:
@@ -172,7 +286,7 @@ class Board:
         coordinate = end_coordinate
         last_state = dictionary.root
         state = last_state.get_next(self.square(*coordinate).tile)
-        next_square = self.increment(coordinate, direction, -1)
+        next_square = self.offset(coordinate, direction, -1)
         while self.square(*next_square) and self.square(*next_square).tile:
             coordinate = next_square
             last_state = state  # this saves the previous state before incrementing
@@ -180,15 +294,15 @@ class Board:
             if not state:  # if non-words are found existing on the board
                 __clear_cross_sets(start_coordinate, direction)
                 return
-            next_square = self.increment(coordinate, direction, -1)
+            next_square = self.offset(coordinate, direction, -1)
 
         # now that we're at the head of the word
-        right_square = self.increment(end_coordinate, direction, 1)
-        left_square = self.increment(coordinate, direction, -1)
+        right_square = self.offset(end_coordinate, direction, 1)
+        left_square = self.offset(coordinate, direction, -1)
 
         # check special case where there is a square with tiles on both sides
-        left_of_left = self.increment(left_square, direction, -1)
-        right_of_right = self.increment(right_square, direction, 1)
+        left_of_left = self.offset(left_square, direction, -1)
+        right_of_right = self.offset(right_square, direction, 1)
 
         if self.square(*left_of_left) and self.square(*left_of_left).tile:
             candidates = (arc for arc in state if arc.char != "#")
@@ -211,11 +325,11 @@ class Board:
             self.square(*right_square).set_cross_set(direction, cross_set)
 
     @staticmethod
-    def increment(coordinate, direction, offset):
+    def offset(coordinate, direction, offset):
         if direction == "across":
-            new_coordinate = coordinate[0] + offset, coordinate[1]
-        elif direction == "down":
             new_coordinate = coordinate[0], coordinate[1] + offset
+        elif direction == "down":
+            new_coordinate = coordinate[0] + offset, coordinate[1]
         else:
             raise TypeError("invalid direction specified: {}".format(direction))
         return new_coordinate
@@ -223,10 +337,10 @@ class Board:
     def fast_forward(self, start_coordinate, direction, step):
         """fast forward the coordinate to the last letter in the word"""
         coordinate = start_coordinate
-        next_coordinate = self.increment(start_coordinate, direction, step)
+        next_coordinate = self.offset(start_coordinate, direction, step)
         while self.square(*next_coordinate) and self.square(*next_coordinate).tile:
             coordinate = next_coordinate
-            next_coordinate = self.increment(start_coordinate, direction, step)
+            next_coordinate = self.offset(coordinate, direction, step)
         return coordinate
 
 
@@ -236,16 +350,16 @@ class Square:
     Attributes:
         _tile: the tile occupying this square
         _cross_set: the set of letters that can form valid crosswords
-        _attribute: score multiplier if present
+        _effect: score multiplier if present
 
     """
 
-    __slots__ = "_cross_set", "_tile", "_attribute"
+    __slots__ = "_cross_set", "_tile", "_effect"
 
     def __init__(self):
         self._tile = None
-        self._attribute = SquareAttribute.NULL
-        self._cross_set = {'down': set(string.ascii_lowercase), 'across': set(string.ascii_lowercase)}
+        self._effect = SquareEffect.NULL
+        self._cross_set = {'down': set(string.ascii_uppercase), 'across': set(string.ascii_uppercase)}
 
     @property
     def tile(self):
@@ -255,7 +369,7 @@ class Square:
     def tile(self, char):
         if self.tile and char != self.tile:
             raise errors.IllegalMoveError("a tile already exists on this square")
-        if char < 'a' or char > 'z':
+        if char < 'A' or char > 'Z':
             raise errors.IllegalMoveError("illegal move! Letter placed must be in the alphabet")
         self._tile = char
 
@@ -269,15 +383,31 @@ class Square:
         self._cross_set[direction] = new_set
 
     @property
-    def attribute(self):
-        return self._attribute
+    def effect(self):
+        return self._effect
 
-    @attribute.setter
-    def attribute(self, attribute):
-        self._attribute = attribute
+    @effect.setter
+    def effect(self, effect):
+        self._effect = effect
 
 
-class SquareAttribute(Enum):
+class Move(object):
+    """A data structure that represents a move"""
+
+    __slots__ = 'word', 'start_square', 'direction', 'score'
+
+    def __init__(self, word, start_square, direction, score):
+        self.word = word
+        self.start_square = start_square
+        self.direction = direction
+        self.score = score
+
+    def __str__(self):
+        return "Play \"{}\" {} from {} to get {} points.".format(
+            self.word, self.direction, self.start_square, self.score)
+
+
+class SquareEffect(Enum):
     """An enum for special attributes for a square"""
 
     NULL = 0
@@ -285,13 +415,6 @@ class SquareAttribute(Enum):
     DL = 2
     TW = 3
     TL = 4
-
-
-class MoveDirection(Enum):
-    """An enum for directions specified for cross set generation"""
-
-    ACROSS = 0
-    DOWN = 1
 
 
 def generate_file_name():

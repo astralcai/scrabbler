@@ -59,6 +59,7 @@ class Dictionary:
         """
         root = State()
         for word in word_list:
+            word = word.upper()
             Dictionary.__add_word(root, word)
         return root
 
@@ -117,7 +118,7 @@ class State:
         return char in self.arcs
 
     def get_arc(self, char) -> "Arc":
-        return self.arcs[char]
+        return self.arcs[char] if char in self.arcs else None
 
     def add_arc(self, char: str, destination: "State" = None) -> "State":
         """adds an arc from this node for the given letter
@@ -185,3 +186,6 @@ class Arc:
 
     def add_letter(self, char: str):
         self.letter_set.add(char)
+
+    def get_next(self, char: str):
+        return self.destination.arcs[char] if char in self.destination.arcs else None
