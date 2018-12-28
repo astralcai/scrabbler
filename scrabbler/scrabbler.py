@@ -11,7 +11,7 @@ import utilities.errors as errors
 script_dir = os.path.dirname(__file__)
 full_tile_path = os.path.join(script_dir, "../resources/tile_list.txt")
 full_dict_path = os.path.join(script_dir, "../resources/dictionary.txt")
-full_board_path = os.path.join(script_dir, "../resources/board.json")
+full_board_dir = os.path.join(script_dir, "../resources/")
 full_saved_games_dir = os.path.join(script_dir, "../games/")
 full_pickled_dict_path = os.path.join(script_dir, "../resources/dictionary.p")
 
@@ -19,7 +19,7 @@ full_pickled_dict_path = os.path.join(script_dir, "../resources/dictionary.p")
 class Game:
     """stores information about a game"""
 
-    def __init__(self, filename=""):
+    def __init__(self, filename="", board="wwf15"):
         """constructor for a game
 
         Args:
@@ -38,7 +38,7 @@ class Game:
             self.board = self.__load_board_from_file(filename)
         else:
             logger.info("starting new game and initializing board...")
-            self.board = Board()
+            self.board = Board(board)
 
         # load a saved dictionary object or construct a new one
         if os.path.exists(full_pickled_dict_path):
@@ -76,7 +76,7 @@ class Game:
             self.board.update_cross_set(coordinate, other_direction, self.dictionary)
             coordinate = self.board.offset(coordinate, direction, 1)
 
-    def find_best_moves(self, rack, first=False):
+    def find_best_moves(self, rack, num=5, first=False):
         """returns the five best moves"""
         rack = list(rack)
         if first:
@@ -87,7 +87,8 @@ class Game:
         down_moves = self.board.find_best_moves(rack, "down", self.dictionary, self.tiles)
         moves = across_moves + down_moves
         moves.sort(key=lambda move: move.score, reverse=True)
-        return list(str(move) for move in moves[0:5])
+        for move in moves[0:num]:
+            print(move)
 
     @staticmethod
     def __load_tile_set_from_file(filename) -> dict:
@@ -106,9 +107,10 @@ class Game:
 class Board:
     """stores a board and all current pieces on the board"""
 
-    def __init__(self):
+    def __init__(self, board):
         """sets up the board as a list of concatenated lists of squares"""
 
+        full_board_path = os.path.join(full_board_dir, "{}.json".format(board))
         with open(full_board_path) as json_data:
             board_data = json.load(json_data)
         self.size = board_data['size']
@@ -125,9 +127,12 @@ class Board:
             self.square(*coordinate).effect = SquareEffect.TW
 
     def __str__(self):
+        board_string = ""
         for i in range(self.size):
-            for j in range(self.size):
-                printf()
+            row = (self.square(i, j).tile for j in range(self.size))
+            row_string = "\t".join(tile if tile else "-" for tile in row)
+            board_string = board_string + row_string + "\n"
+        return board_string
 
     def square(self, row, col):
         """gets the square on the given coordinate, return None if out of bounds"""
@@ -193,10 +198,10 @@ class Board:
                     new_score = score_count_ + tile_score
                     go_on(pos_, letter_, word_, tmp_rack_, arc_.get_next(letter_), arc_, new_score, tmp_effects)
                 if "?" in rack_:
-                    for letter_ in (x for x in set(string.ascii_lowercase) if
+                    for letter_ in (x for x in set(string.ascii_uppercase) if
                                     x in self.square(*coordinate_).cross_set(other_direction)):
                         tmp_rack_ = deepcopy(rack_)
-                        tmp_rack_.remove(letter_)
+                        tmp_rack_.remove("?")
                         tmp_effects = deepcopy(effects_)
                         effect = self.square(*coordinate_).effect
                         if effect in [SquareEffect.DW, SquareEffect.TW]:
@@ -234,14 +239,14 @@ class Board:
                     gen(pos_ + 1, word_, rack_, new_arc_, score_count_, effects_)
 
         def record_play(offset_, word_, score_, effects_, current_rack_):
-            if not current_rack_:
-                score_ = score_ + 35
             start_square = self.offset(anchor, direction, offset_)
             for effect_ in effects_:
                 if effect_ == SquareEffect.TW:
                     score_ = score_ * 3
                 elif effect_ == SquareEffect.DW:
                     score_ = score_ * 2
+            if not current_rack_:
+                score_ = score_ + 35
             plays.append(Move(word_, start_square, direction, score_))
 
         initial_arc = Arc("", dictionary.root)
@@ -340,7 +345,7 @@ class Board:
             candidates = (arc for arc in end_state if arc != "#") if end_state else {}
             cross_set = set(
                 candidate.char for candidate in candidates if __check_candidate(right_square, candidate, direction, 1))
-            self.square(*left_square).set_cross_set(direction, cross_set)
+            self.square(*right_square).set_cross_set(direction, cross_set)
         elif self.square(*right_square):
             end_arc = state.get_arc(DELIMITER)
             cross_set = end_arc.letter_set if end_arc else {}
