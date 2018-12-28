@@ -27,14 +27,14 @@ class Dictionary:
     def __init__(self, root: "State"):
         self.root = root
 
-    def store(self, filename):
+    def store(self, filename: str):
         """stores a GADDAG data structure to the designated file"""
 
         with gzip.open(filename, "wb") as f:
             f.write(pickle.dumps(self.root))
 
     @classmethod
-    def construct_with_text_file(cls, filename):
+    def construct_with_text_file(cls, filename: str) -> "Dictionary":
         with open(filename) as f:
             words = f.readlines()
         word_list = set(x.rstrip('\n') for x in words)
@@ -42,7 +42,7 @@ class Dictionary:
         return cls(root)
 
     @classmethod
-    def load_from_pickle(cls, filename):
+    def load_from_pickle(cls, filename: str) -> "Dictionary":
         root = cls.__load_picked_dictionary_from_file(filename)
         return cls(root)
 
@@ -105,10 +105,11 @@ class Dictionary:
 class State:
     """a state in a GADDAG"""
 
-    __slots__ = "arcs"
+    __slots__ = "arcs", "letter_set"
 
     def __init__(self):
         self.arcs = dict()
+        self.letter_set = set()
 
     def __iter__(self):
         for char in self.arcs:
@@ -151,8 +152,11 @@ class State:
         """
         if char not in self.arcs:
             self.arcs[char] = Arc(char)
-        self.arcs[char].add_letter(final)
+        self.get_next(char).add_letter(final)
         return self.get_next(char)
+
+    def add_letter(self, char: str):
+        self.letter_set.add(char)
 
     def get_next(self, char: str) -> "State":
         """Gets the node that the given letter leads to"""
@@ -165,27 +169,26 @@ class Arc:
     Attributes:
         char: the letter corresponding to this arc
         destination: the node that this arc leads to
-        letter_set: the set of letters which, if encountered next, makes a word
 
     """
 
-    __slots__ = "char", "destination", "letter_set"
+    __slots__ = "char", "destination"
 
     def __init__(self, char: str, destination: "State" = None):
-        self.letter_set = set()
         self.char = char
         if not destination:
             destination = State()
         self.destination = destination
 
     def __contains__(self, char: str):
-        return char in self.letter_set
+        return char in self.destination.letter_set
 
     def __eq__(self, other: str):
         return other == self.char
 
-    def add_letter(self, char: str):
-        self.letter_set.add(char)
+    @property
+    def letter_set(self):
+        return self.destination.letter_set if self.destination else set()
 
     def get_next(self, char: str):
         return self.destination.arcs[char] if char in self.destination.arcs else None

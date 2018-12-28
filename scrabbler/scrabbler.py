@@ -80,7 +80,7 @@ class Game:
         """returns the five best moves"""
         rack = list(rack)
         if first:
-            moves = self.board.generate_moves((7, 7), "across", rack, self.dictionary, self.tiles)
+            moves = self.board.generate_moves((7, 7), "across", rack, self.dictionary, self.tiles, {})
             moves.sort(key=lambda move: move.score, reverse=True)
             return list(str(move) for move in moves[0:5])
         across_moves = self.board.find_best_moves(rack, "across", self.dictionary, self.tiles)
@@ -124,8 +124,15 @@ class Board:
         for coordinate in special_squares['TW']:
             self.square(*coordinate).effect = SquareEffect.TW
 
+    def __str__(self):
+        for i in range(self.size):
+            for j in range(self.size):
+                printf()
+
     def square(self, row, col):
         """gets the square on the given coordinate, return None if out of bounds"""
+        if any(index < 0 or index >= self.size for index in [row, col]):
+            return None
         index = row * self.size + col
         return self._board[index] if index < self.size * self.size else None
 
@@ -152,7 +159,7 @@ class Board:
                 coordinate = self.offset(start_coordinate, direction, offset)
             raise errors.IllegalMoveError("Cannot place this word on the given coordinates")
 
-    def generate_moves(self, anchor, direction, rack, dictionary, tile_set):
+    def generate_moves(self, anchor, direction, rack, dictionary, tile_set, anchors_used):
         """generate all possible moves from a given anchor with the current rack"""
 
         from copy import deepcopy
@@ -171,7 +178,7 @@ class Board:
                 go_on(pos_, tile_, word_, rack_, arc_.get_next(tile_), arc_, new_score, effects_)
             elif rack_:
                 other_direction = "down" if direction == "across" else "across"
-                for letter_ in (x for x in rack_ if x in self.square(*coordinate_).cross_set(other_direction)):
+                for letter_ in (x for x in set(rack_) if x in self.square(*coordinate_).cross_set(other_direction)):
                     tmp_rack_ = deepcopy(rack_)
                     tmp_rack_.remove(letter_)
                     tmp_effects = deepcopy(effects_)
@@ -202,14 +209,17 @@ class Board:
             directly_left_square = self.square(*directly_left)
             directly_right = self.offset(anchor, direction, pos_ + 1)
             directly_right_square = self.square(*directly_right)
+            right_side = self.offset(anchor, direction, 1)
+            right_side_square = self.square(*right_side)
 
             if pos_ <= 0:
                 word_ = char_ + word_
                 left_good = not directly_left_square or not directly_left_square.tile
-                if char_ in old_arc_.letter_set and left_good:
-                    record_play(pos_, word_, score_count_, effects_)
+                right_good = not right_side_square or not right_side_square.tile
+                if char_ in old_arc_.letter_set and left_good and right_good:
+                    record_play(pos_, word_, score_count_, effects_, rack_)
                 if new_arc_:
-                    if directly_left_square:
+                    if directly_left_square and directly_left not in anchors_used:
                         gen(pos_ - 1, word_, rack_, new_arc_, score_count_, effects_)
                     new_arc_ = new_arc_.get_next(DELIMITER)
                     if new_arc_ and left_good and directly_right_square:
@@ -219,11 +229,13 @@ class Board:
                 right_good = not directly_right_square or not directly_right_square.tile
                 if char_ in old_arc_.letter_set and right_good:
                     left_most = pos_ - len(word_) + 1
-                    record_play(left_most, word_, score_count_, effects_)
+                    record_play(left_most, word_, score_count_, effects_, rack_)
                 if new_arc_ and directly_right_square:
                     gen(pos_ + 1, word_, rack_, new_arc_, score_count_, effects_)
 
-        def record_play(offset_, word_, score_, effects_):
+        def record_play(offset_, word_, score_, effects_, current_rack_):
+            if not current_rack_:
+                score_ = score_ + 35
             start_square = self.offset(anchor, direction, offset_)
             for effect_ in effects_:
                 if effect_ == SquareEffect.TW:
@@ -238,18 +250,27 @@ class Board:
         return plays
 
     def find_best_moves(self, rack, direction, dictionary, tile_set):
+
+        anchors_used = []
+
+        def is_anchor(coordinate_):
+            left = self.offset(coordinate_, "across", -1)
+            right = self.offset(coordinate_, "across", 1)
+            above = self.offset(coordinate_, "down", -1)
+            below = self.offset(coordinate_, "down", 1)
+            squares = (self.square(*block) for block in [left, right, above, below])
+            return any(square and square.tile for square in squares) and not self.square(*coordinate_).tile
+
         moves = []
         other_direction = "across" if direction == "down" else "down"
         corner = (0, 0)
         for i in range(self.size - 1):
             left_most = self.offset(corner, other_direction, i)
-            if self.square(*left_most).tile:
-                moves.extend(self.generate_moves(left_most, direction, rack, dictionary, tile_set))
             for j in range(self.size - 1):
                 current = self.offset(left_most, direction, j)
-                next_square = self.offset(current, direction, 1)
-                if not self.square(*current).tile and self.square(*next_square).tile:
-                    moves.extend(self.generate_moves(next_square, direction, rack, dictionary, tile_set))
+                if is_anchor(current):
+                    moves.extend(self.generate_moves(current, direction, rack, dictionary, tile_set, anchors_used))
+                    anchors_used.append(current)
         return moves
 
     def update_cross_set(self, start_coordinate, direction, dictionary):
@@ -271,10 +292,11 @@ class Board:
             next_square_ = self.offset(coordinate_, direction_, step)
             while self.square(*next_square_) and self.square(*next_square_).tile:
                 coordinate_ = next_square_
-                last_arc_ = state_.arcs[self.square(*coordinate_).tile]
-                state_ = last_arc_.destination
-                if not state:
+                tile_ = self.square(*coordinate_).tile
+                last_arc_ = state_.arcs[tile_] if tile_ in state_.arcs else None
+                if not last_arc_:
                     return False
+                state_ = last_arc_.destination
                 next_square_ = self.offset(coordinate_, direction_, step)
             return self.square(*coordinate_).tile in last_arc_.letter_set
 
@@ -307,7 +329,7 @@ class Board:
         if self.square(*left_of_left) and self.square(*left_of_left).tile:
             candidates = (arc for arc in state if arc.char != "#")
             cross_set = set(
-                candidate for candidate in candidates if __check_candidate(left_square, candidate, direction, -1))
+                candidate.char for candidate in candidates if __check_candidate(left_square, candidate, direction, -1))
             self.square(*left_square).set_cross_set(direction, cross_set)
         elif self.square(*left_square):
             cross_set = last_state.get_arc(self.square(*coordinate).tile).letter_set
@@ -317,7 +339,7 @@ class Board:
             end_state = state.get_next(DELIMITER)
             candidates = (arc for arc in end_state if arc != "#") if end_state else {}
             cross_set = set(
-                candidate for candidate in candidates if __check_candidate(right_square, candidate, direction, 1))
+                candidate.char for candidate in candidates if __check_candidate(right_square, candidate, direction, 1))
             self.square(*left_square).set_cross_set(direction, cross_set)
         elif self.square(*right_square):
             end_arc = state.get_arc(DELIMITER)
