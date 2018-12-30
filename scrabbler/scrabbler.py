@@ -9,11 +9,8 @@ import utilities.logger as logger
 import utilities.errors as errors
 
 script_dir = os.path.dirname(__file__)
-full_tile_path = os.path.join(script_dir, "../resources/tile_list.txt")
-full_dict_path = os.path.join(script_dir, "../resources/dictionary.txt")
-full_board_dir = os.path.join(script_dir, "../resources/")
+resource_dir = os.path.join(script_dir, "../resources")
 full_saved_games_dir = os.path.join(script_dir, "../games/")
-full_pickled_dict_path = os.path.join(script_dir, "../resources/dictionary.p")
 
 
 class Game:
@@ -29,26 +26,34 @@ class Game:
 
         logger.info("Initializing game...")
 
-        # load the list of tiles and their corresponding scores
-        self.tiles = self.__load_tile_set_from_file(full_tile_path)
-
         # load the state of the board from a saved game
         if filename:
             logger.info("loading saved game from \"{}\"...".format(filename))
-            self.board = self.__load_board_from_file(filename)
+            game_data = self.__load_game_data_from_file(filename)
+            self.board_type = game_data["board_type"]
+            self.board = game_data["board"]
         else:
             logger.info("starting new game and initializing board...")
+            self.board_type = board
             self.board = Board(board)
 
+        resource_directory = os.path.join(resource_dir, self.board_type)
+        tile_path = os.path.join(resource_directory, "tile_list.txt")
+        dictionary_path = os.path.join(resource_directory, "dictionary.txt")
+        saved_dictionary_path = os.path.join(resource_directory, "dictionary.p")
+
+        # load the list of tiles and their corresponding scores
+        self.tiles = self.__load_tile_set_from_file(tile_path)
+
         # load a saved dictionary object or construct a new one
-        if os.path.exists(full_pickled_dict_path):
+        if os.path.exists(saved_dictionary_path):
             logger.info("loading saved dictionary file...")
-            self.dictionary = Dictionary.load_from_pickle(full_pickled_dict_path)
+            self.dictionary = Dictionary.load_from_pickle(saved_dictionary_path)
         else:
             logger.info("constructing dictionary...")
-            self.dictionary = Dictionary.construct_with_text_file(full_dict_path)
+            self.dictionary = Dictionary.construct_with_text_file(dictionary_path)
             logger.info("saving dictionary structure...")
-            self.dictionary.store(full_pickled_dict_path)
+            self.dictionary.store(saved_dictionary_path)
 
         logger.info("Game initialized successfully.")
 
@@ -59,8 +64,12 @@ class Game:
             os.makedirs(full_saved_games_dir)
         filename = filename if filename else generate_file_name()
         logger.info("Saving game to file \"{}\"...".format(filename))
+        game_data = {
+            "board_type": self.board_type,
+            "board": self.board
+        }
         with gzip.open(os.path.join(full_saved_games_dir, "{}.p".format(filename)), "wb") as f:
-            f.write(pickle.dumps(self.board))
+            f.write(pickle.dumps(game_data))
         logger.info("Game saved.")
 
     def play(self, start_square, word, direction):
@@ -78,15 +87,18 @@ class Game:
 
     def find_best_moves(self, rack, num=5, first=False):
         """returns the five best moves"""
+
         rack = list(rack)
+
+        mid = int(self.board.size / 2)
         if first:
-            moves = self.board.generate_moves((7, 7), "across", rack, self.dictionary, self.tiles, {})
-            moves.sort(key=lambda move: move.score, reverse=True)
-            return list(str(move) for move in moves[0:5])
-        across_moves = self.board.find_best_moves(rack, "across", self.dictionary, self.tiles)
-        down_moves = self.board.find_best_moves(rack, "down", self.dictionary, self.tiles)
-        moves = across_moves + down_moves
-        moves.sort(key=lambda move: move.score, reverse=True)
+            moves = self.board.generate_moves((mid, mid), "across", rack, self.dictionary, self.tiles, {})
+        else:
+            across_moves = self.board.find_best_moves(rack, "across", self.dictionary, self.tiles)
+            down_moves = self.board.find_best_moves(rack, "down", self.dictionary, self.tiles)
+            moves = across_moves + down_moves
+
+        moves.sort(key=lambda move_: move_.score, reverse=True)
         for move in moves[0:num]:
             print(move)
 
@@ -97,7 +109,7 @@ class Game:
         return dict((tile[0], int(tile[2:-1])) for tile in tiles)  # {'A': '1', 'B': '4', 'C': '4', ...}
 
     @staticmethod
-    def __load_board_from_file(filename) -> "Board":
+    def __load_game_data_from_file(filename) -> dict:
         """loads an unfinished game from a file"""
 
         with gzip.open(os.path.join(full_saved_games_dir, filename), "rb") as f:
@@ -107,10 +119,14 @@ class Game:
 class Board:
     """stores a board and all current pieces on the board"""
 
-    def __init__(self, board):
+    def __init__(self, board_type):
         """sets up the board as a list of concatenated lists of squares"""
 
-        full_board_path = os.path.join(full_board_dir, "{}.json".format(board))
+        self.type = board_type
+
+        board_path = os.path.join(resource_dir, board_type)
+        full_board_path = os.path.join(board_path, "board.json")
+
         with open(full_board_path) as json_data:
             board_data = json.load(json_data)
         self.size = board_data['size']
@@ -171,44 +187,36 @@ class Board:
 
         plays = []
 
-        def gen(pos_, word_, rack_, arc_, score_count_, effects_):
+        def gen(pos_, word_, rack_, arc_, new_tiles_, wild_cards_):
 
             rack_ = deepcopy(rack_)
-            effects_ = deepcopy(effects_)
 
             coordinate_ = self.offset(anchor, direction, pos_)
             tile_ = self.square(*coordinate_).tile
             if tile_:
-                new_score = score_count_ + tile_set[tile_]
-                go_on(pos_, tile_, word_, rack_, arc_.get_next(tile_), arc_, new_score, effects_)
+                new_tiles_ = deepcopy(new_tiles_)
+                go_on(pos_, tile_, word_, rack_, arc_.get_next(tile_), arc_, new_tiles_, wild_cards_)
             elif rack_:
                 other_direction = "down" if direction == "across" else "across"
                 for letter_ in (x for x in set(rack_) if x in self.square(*coordinate_).cross_set(other_direction)):
                     tmp_rack_ = deepcopy(rack_)
                     tmp_rack_.remove(letter_)
-                    tmp_effects = deepcopy(effects_)
-                    effect = self.square(*coordinate_).effect
-                    tile_score = tile_set[letter_]
-                    if effect == SquareEffect.DL:
-                        tile_score = tile_score * 2
-                    elif effect == SquareEffect.TL:
-                        tile_score = tile_score * 3
-                    elif effect in [SquareEffect.DW, SquareEffect.TW]:
-                        tmp_effects.append(effect)
-                    new_score = score_count_ + tile_score
-                    go_on(pos_, letter_, word_, tmp_rack_, arc_.get_next(letter_), arc_, new_score, tmp_effects)
+                    tmp_new_tiles_ = deepcopy(new_tiles_)
+                    tmp_new_tiles_.append(pos_)
+                    go_on(pos_, letter_, word_, tmp_rack_, arc_.get_next(letter_), arc_, tmp_new_tiles_, wild_cards_)
                 if "?" in rack_:
                     for letter_ in (x for x in set(string.ascii_uppercase) if
                                     x in self.square(*coordinate_).cross_set(other_direction)):
                         tmp_rack_ = deepcopy(rack_)
                         tmp_rack_.remove("?")
-                        tmp_effects = deepcopy(effects_)
-                        effect = self.square(*coordinate_).effect
-                        if effect in [SquareEffect.DW, SquareEffect.TW]:
-                            tmp_effects.append(effect)
-                        go_on(pos_, letter_, word_, tmp_rack_, arc_.get_next(letter_), arc_, score_count_, tmp_effects)
+                        tmp_new_tiles_ = deepcopy(new_tiles_)
+                        tmp_new_tiles_.append(pos_)
+                        tmp_wild_cards_ = deepcopy(wild_cards_)
+                        tmp_wild_cards_.append(pos_)
+                        next_arc = arc_.get_next(letter_)
+                        go_on(pos_, letter_, word_, tmp_rack_, next_arc, arc_, tmp_new_tiles_, tmp_wild_cards_)
 
-        def go_on(pos_, char_, word_, rack_, new_arc_, old_arc_, score_count_, effects_):
+        def go_on(pos_, char_, word_, rack_, new_arc_, old_arc_, new_tiles_, wild_cards_):
 
             directly_left = self.offset(anchor, direction, pos_ - 1)
             directly_left_square = self.square(*directly_left)
@@ -222,35 +230,83 @@ class Board:
                 left_good = not directly_left_square or not directly_left_square.tile
                 right_good = not right_side_square or not right_side_square.tile
                 if char_ in old_arc_.letter_set and left_good and right_good:
-                    record_play(pos_, word_, score_count_, effects_, rack_)
+                    record_play(pos_, word_, rack_, new_tiles_, wild_cards_)
                 if new_arc_:
                     if directly_left_square and directly_left not in anchors_used:
-                        gen(pos_ - 1, word_, rack_, new_arc_, score_count_, effects_)
+                        gen(pos_ - 1, word_, rack_, new_arc_, new_tiles_, wild_cards_)
                     new_arc_ = new_arc_.get_next(DELIMITER)
                     if new_arc_ and left_good and directly_right_square:
-                        gen(1, word_, rack_, new_arc_, score_count_, effects_)
+                        gen(1, word_, rack_, new_arc_, new_tiles_, wild_cards_)
             else:
                 word_ = word_ + char_
                 right_good = not directly_right_square or not directly_right_square.tile
                 if char_ in old_arc_.letter_set and right_good:
                     left_most = pos_ - len(word_) + 1
-                    record_play(left_most, word_, score_count_, effects_, rack_)
+                    record_play(left_most, word_, rack_, new_tiles_, wild_cards_)
                 if new_arc_ and directly_right_square:
-                    gen(pos_ + 1, word_, rack_, new_arc_, score_count_, effects_)
+                    gen(pos_ + 1, word_, rack_, new_arc_, new_tiles_, wild_cards_)
 
-        def record_play(offset_, word_, score_, effects_, current_rack_):
+        def record_play(offset_, word_, current_rack_, new_tile_register_, wild_cards_):
             start_square = self.offset(anchor, direction, offset_)
+            effects_ = []
+            word_score_ = 0
+            cross_score_ = 0
+            for pos_, letter_ in enumerate(word_):
+                pos = pos_ + offset_
+                coordinate_ = self.offset(anchor, direction, pos)
+                tile_score = tile_set[letter_] if pos not in wild_cards_ else 0
+                if pos in new_tile_register_:
+                    effect = self.square(*coordinate_).effect
+                    if effect == SquareEffect.DL:
+                        tile_score = tile_score * 2
+                    elif effect == SquareEffect.TL:
+                        tile_score = tile_score * 3
+                    elif effect in [SquareEffect.DW, SquareEffect.TW]:
+                        effects_.append(effect)
+                    cross_score_ = cross_score_ + cross_score(tile_score, coordinate_, effect)
+                word_score_ = word_score_ + tile_score
             for effect_ in effects_:
                 if effect_ == SquareEffect.TW:
-                    score_ = score_ * 3
+                    word_score_ = word_score_ * 3
                 elif effect_ == SquareEffect.DW:
-                    score_ = score_ * 2
+                    word_score_ = word_score_ * 2
             if not current_rack_:
-                score_ = score_ + 35
-            plays.append(Move(word_, start_square, direction, score_))
+                bingo_bonus = 50 if self.type == "scrabble" else 35
+                word_score_ = word_score_ + bingo_bonus
+            plays.append(Move(word_, start_square, direction, word_score_ + cross_score_))
+
+        def cross_score(tile_score_, coordinate_, effect_):
+
+            other_direction = "across" if direction == "down" else "down"
+            top = self.fast_forward(coordinate_, other_direction, -1)
+            bottom = self.fast_forward(coordinate_, other_direction, 1)
+            if top == coordinate_ and bottom == coordinate_:
+                return 0  # so that tiles are not double counted
+
+            word_score_ = tile_score_
+
+            current_square_ = top
+            while current_square_ != coordinate_:
+                # go from top down
+                tile_ = self.square(*current_square_).tile
+                word_score_ = word_score_ + tile_set[tile_]
+                current_square_ = self.offset(current_square_, other_direction, 1)
+            current_square_ = bottom
+            while current_square_ != coordinate_:
+                # go from bottom up
+                tile_ = self.square(*current_square_).tile
+                word_score_ = word_score_ + tile_set[tile_]
+                current_square_ = self.offset(current_square_, other_direction, -1)
+
+            if effect_ == SquareEffect.TW:
+                word_score_ = word_score_ * 3
+            elif effect_ == SquareEffect.DW:
+                word_score_ = word_score_ * 2
+
+            return word_score_
 
         initial_arc = Arc("", dictionary.root)
-        gen(0, "", deepcopy(rack), initial_arc, 0, [])
+        gen(0, "", deepcopy(rack), initial_arc, [], [])
 
         return plays
 

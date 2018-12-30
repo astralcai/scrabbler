@@ -62,4 +62,6 @@ docs/_build/
 # PyBuilder
 target/
 
-resources/dictionary\.p
+# generated files
+resources/*/dictionary\.p
+games
