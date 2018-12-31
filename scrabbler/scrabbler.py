@@ -106,7 +106,7 @@ class Game:
     def __load_tile_set_from_file(filename) -> dict:
         with open(filename) as f:
             tiles = f.readlines()  # ['A 1\n', 'B 4\n', 'C 4\n', 'D 2\n', ...]
-        return dict((tile[0], int(tile[2:-1])) for tile in tiles)  # {'A': '1', 'B': '4', 'C': '4', ...}
+        return dict((tile[0], int(tile.strip("\n")[2:])) for tile in tiles)  # {'A': '1', 'B': '4', 'C': '4', ...}
 
     @staticmethod
     def __load_game_data_from_file(filename) -> dict:
@@ -229,18 +229,18 @@ class Board:
                 word_ = char_ + word_
                 left_good = not directly_left_square or not directly_left_square.tile
                 right_good = not right_side_square or not right_side_square.tile
-                if char_ in old_arc_.letter_set and left_good and right_good:
+                if char_ in old_arc_.letter_set and left_good and right_good and new_tiles_:
                     record_play(pos_, word_, rack_, new_tiles_, wild_cards_)
                 if new_arc_:
                     if directly_left_square and directly_left not in anchors_used:
                         gen(pos_ - 1, word_, rack_, new_arc_, new_tiles_, wild_cards_)
                     new_arc_ = new_arc_.get_next(DELIMITER)
-                    if new_arc_ and left_good and directly_right_square:
+                    if new_arc_ and left_good and right_side_square:
                         gen(1, word_, rack_, new_arc_, new_tiles_, wild_cards_)
             else:
                 word_ = word_ + char_
                 right_good = not directly_right_square or not directly_right_square.tile
-                if char_ in old_arc_.letter_set and right_good:
+                if char_ in old_arc_.letter_set and right_good and new_tiles_:
                     left_most = pos_ - len(word_) + 1
                     record_play(left_most, word_, rack_, new_tiles_, wild_cards_)
                 if new_arc_ and directly_right_square:
@@ -313,21 +313,22 @@ class Board:
     def find_best_moves(self, rack, direction, dictionary, tile_set):
 
         anchors_used = []
-
-        def is_anchor(coordinate_):
-            left = self.offset(coordinate_, "across", -1)
-            right = self.offset(coordinate_, "across", 1)
-            above = self.offset(coordinate_, "down", -1)
-            below = self.offset(coordinate_, "down", 1)
-            squares = (self.square(*block) for block in [left, right, above, below])
-            return any(square and square.tile for square in squares) and not self.square(*coordinate_).tile
-
         moves = []
         other_direction = "across" if direction == "down" else "down"
+
+        def is_anchor(coordinate_):
+            right = self.offset(coordinate_, direction, 1)
+            above = self.offset(coordinate_, other_direction, -1)
+            below = self.offset(coordinate_, other_direction, 1)
+            cross_squares = (self.square(*block) for block in [above, below])
+            if not self.square(*coordinate_).tile:
+                return any(square and square.tile for square in cross_squares)
+            return not self.square(*right) or not self.square(*right).tile
+
         corner = (0, 0)
-        for i in range(self.size - 1):
+        for i in range(self.size):
             left_most = self.offset(corner, other_direction, i)
-            for j in range(self.size - 1):
+            for j in range(self.size):
                 current = self.offset(left_most, direction, j)
                 if is_anchor(current):
                     moves.extend(self.generate_moves(current, direction, rack, dictionary, tile_set, anchors_used))
