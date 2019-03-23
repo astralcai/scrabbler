@@ -28,6 +28,7 @@ class Game:
 
         # load the state of the board from a saved game
         if filename:
+            filename = filename + ".p" if filename[-2:]  == ".p" else filename
             logger.info("loading saved game from \"{}\"...".format(filename))
             game_data = self.__load_game_data_from_file(filename)
             self.board_type = game_data["board_type"]
@@ -102,6 +103,10 @@ class Game:
         for move in moves[0:num]:
             print(move)
 
+    def show(self):
+        """prints the board to terminal"""
+        print(self.board)
+    
     @staticmethod
     def __load_tile_set_from_file(filename) -> dict:
         with open(filename) as f:
@@ -111,7 +116,6 @@ class Game:
     @staticmethod
     def __load_game_data_from_file(filename) -> dict:
         """loads an unfinished game from a file"""
-
         with gzip.open(os.path.join(full_saved_games_dir, filename), "rb") as f:
             return pickle.loads(f.read())
 
@@ -146,7 +150,7 @@ class Board:
         board_string = ""
         for i in range(self.size):
             row = (self.square(i, j).tile for j in range(self.size))
-            row_string = "\t".join(tile if tile else "-" for tile in row)
+            row_string = "  ".join(tile if tile else "-" for tile in row)
             board_string = board_string + row_string + "\n"
         return board_string
 
