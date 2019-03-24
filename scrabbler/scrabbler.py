@@ -86,13 +86,13 @@ class Game:
             self.board.update_cross_set(coordinate, other_direction, self.dictionary)
             coordinate = self.board.offset(coordinate, direction, 1)
 
-    def find_best_moves(self, rack, num=5, first=False):
+    def find_best_moves(self, rack, num=5):
         """returns the five best moves"""
 
         rack = list(rack)
 
         mid = int(self.board.size / 2)
-        if first:
+        if self.board.empty:
             moves = self.board.generate_moves((mid, mid), "across", rack, self.dictionary, self.tiles, {})
         else:
             across_moves = self.board.find_best_moves(rack, "across", self.dictionary, self.tiles)
@@ -126,7 +126,8 @@ class Board:
     def __init__(self, board_type):
         """sets up the board as a list of concatenated lists of squares"""
 
-        self.type = board_type
+        self.board_type = board_type
+        self.empty = True
 
         board_path = os.path.join(resource_dir, board_type)
         full_board_path = os.path.join(board_path, "board.json")
@@ -183,6 +184,7 @@ class Board:
                 offset = offset - 1
                 coordinate = self.offset(start_coordinate, direction, offset)
             raise errors.IllegalMoveError("Cannot place this word on the given coordinates")
+        self.empty = False
 
     def generate_moves(self, anchor, direction, rack, dictionary, tile_set, anchors_used):
         """generate all possible moves from a given anchor with the current rack"""
@@ -275,7 +277,7 @@ class Board:
                 elif effect_ == SquareEffect.DW:
                     word_score_ = word_score_ * 2
             if not current_rack_:
-                bingo_bonus = 50 if self.type == "scrabble" else 35
+                bingo_bonus = 50 if self.board_type == "scrabble" else 35
                 word_score_ = word_score_ + bingo_bonus
             plays.append(Move(word_, start_square, direction, word_score_ + cross_score_))
 
