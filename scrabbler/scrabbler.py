@@ -28,15 +28,17 @@ class Game:
 
         # load the state of the board from a saved game
         if filename:
-            filename = filename + ".p" if filename[-2:]  == ".p" else filename
+            filename = filename + ".p" if filename[-2:] != ".p" else filename
             logger.info("loading saved game from \"{}\"...".format(filename))
             game_data = self.__load_game_data_from_file(filename)
             self.board_type = game_data["board_type"]
             self.board = game_data["board"]
+            self.filename = game_data["filename"]
         else:
             logger.info("starting new game and initializing board...")
             self.board_type = board
             self.board = Board(board)
+            self.filename = None
 
         resource_directory = os.path.join(resource_dir, self.board_type)
         tile_path = os.path.join(resource_directory, "tile_list.txt")
@@ -63,11 +65,12 @@ class Game:
 
         if not os.path.exists(full_saved_games_dir):
             os.makedirs(full_saved_games_dir)
-        filename = filename if filename else generate_file_name()
-        logger.info("Saving game to file \"{}\"...".format(filename))
+        self.filename = filename if filename else self.filename if self.filename else generate_file_name()
+        logger.info("Saving game to file \"{}\"...".format(self.filename))
         game_data = {
             "board_type": self.board_type,
             "board": self.board
+            "name": self.filename
         }
         with gzip.open(os.path.join(full_saved_games_dir, "{}.p".format(filename)), "wb") as f:
             f.write(pickle.dumps(game_data))
