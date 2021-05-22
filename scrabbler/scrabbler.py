@@ -69,7 +69,7 @@ class Game:
         logger.info("Saving game to file \"{}\"...".format(self.filename))
         game_data = {
             "board_type": self.board_type,
-            "board": self.board
+            "board": self.board,
             "name": self.filename
         }
         with gzip.open(os.path.join(full_saved_games_dir, "{}.p".format(filename)), "wb") as f:
