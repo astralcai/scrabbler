@@ -16,26 +16,28 @@ full_saved_games_dir = os.path.join(script_dir, "../games/")
 class Game:
     """stores information about a game"""
 
-    def __init__(self, filename="", board="wwf15"):
+    def __init__(self, filename="", board="scrabble", global_dictionary = None, enable_logger = True):
         """constructor for a game
 
         Args:
             filename: the filename of a saved game if specified
 
         """
-
-        logger.info("Initializing game...")
+        if enable_logger:
+            logger.info("Initializing game...")
 
         # load the state of the board from a saved game
         if filename:
             filename = filename + ".p" if filename[-2:] != ".p" else filename
-            logger.info("loading saved game from \"{}\"...".format(filename))
+            if enable_logger:
+                logger.info("loading saved game from \"{}\"...".format(filename))
             game_data = self.__load_game_data_from_file(filename)
             self.board_type = game_data["board_type"]
             self.board = game_data["board"]
-            self.filename = game_data["filename"]
+            # self.filename = game_data[filename]
         else:
-            logger.info("starting new game and initializing board...")
+            if enable_logger:
+                logger.info("starting new game and initializing board...")
             self.board_type = board
             self.board = Board(board)
             self.filename = None
@@ -50,15 +52,21 @@ class Game:
 
         # load a saved dictionary object or construct a new one
         if os.path.exists(saved_dictionary_path):
-            logger.info("loading saved dictionary file...")
-            self.dictionary = Dictionary.load_from_pickle(saved_dictionary_path)
+            if enable_logger:
+                logger.info("loading saved dictionary file...")
+            if global_dictionary:
+                self.dictionary = global_dictionary
+            else:
+                self.dictionary = Dictionary.load_from_pickle(saved_dictionary_path)
+            
         else:
             logger.info("constructing dictionary...")
             self.dictionary = Dictionary.construct_with_text_file(dictionary_path)
             logger.info("saving dictionary structure...")
             self.dictionary.store(saved_dictionary_path)
-
-        logger.info("Game initialized successfully.")
+        
+        if enable_logger:
+            logger.info("Game initialized successfully.")
 
     def save(self, filename=None):
         """saves an unfinished game to disk"""
@@ -103,12 +111,17 @@ class Game:
             moves = across_moves + down_moves
 
         moves.sort(key=lambda move_: move_.score, reverse=True)
-        for move in moves[0:num]:
-            print(move)
+        # for move in moves[0:num]:
+        #     print(move)
+        
+        return moves
 
     def show(self):
         """prints the board to terminal"""
         print(self.board)
+    
+    def get_board(self):
+        return self.board
     
     @staticmethod
     def __load_tile_set_from_file(filename) -> dict:
