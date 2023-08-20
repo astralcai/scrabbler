@@ -58,6 +58,8 @@ class Game:
             logger.info("saving dictionary structure...")
             self.dictionary.store(saved_dictionary_path)
 
+        self.moves = []  # list of last best moves found
+
         logger.info("Game initialized successfully.")
 
     def save(self, filename=None):
@@ -78,16 +80,18 @@ class Game:
 
     def play(self, start_square, word, direction):
         """play a move on the board"""
+        word = word.upper()
+        play = [m for m in self.moves if m.start_square == start_square and m.word == word and m.direction == direction]
+        if play:
+            self.board.place_word(play[0])
 
-        self.board.place_word(start_square, word, direction)
-
-        # update affected cross sets
-        self.board.update_cross_set(start_square, direction, self.dictionary)
-        other_direction = "across" if direction == "down" else "down"
-        coordinate = start_square
-        for _ in word:
-            self.board.update_cross_set(coordinate, other_direction, self.dictionary)
-            coordinate = self.board.offset(coordinate, direction, 1)
+            # update affected cross sets
+            self.board.update_cross_set(start_square, direction, self.dictionary)
+            other_direction = "across" if direction == "down" else "down"
+            coordinate = start_square
+            for _ in word:
+                self.board.update_cross_set(coordinate, other_direction, self.dictionary)
+                coordinate = self.board.offset(coordinate, direction, 1)
 
     def find_best_moves(self, rack, num=5):
         """returns the five best moves"""
@@ -96,14 +100,14 @@ class Game:
 
         mid = int(self.board.size / 2)
         if self.board.empty:
-            moves = self.board.generate_moves((mid, mid), "across", rack, self.dictionary, self.tiles, {})
+            self.moves = self.board.generate_moves((mid, mid), "across", rack, self.dictionary, self.tiles, {})
         else:
             across_moves = self.board.find_best_moves(rack, "across", self.dictionary, self.tiles)
             down_moves = self.board.find_best_moves(rack, "down", self.dictionary, self.tiles)
-            moves = across_moves + down_moves
+            self.moves = across_moves + down_moves
 
-        moves.sort(key=lambda move_: move_.score, reverse=True)
-        for move in moves[0:num]:
+        self.moves.sort(key=lambda move_: move_.score, reverse=True)
+        for move in self.moves[0:num]:
             print(move)
 
     def show(self):
@@ -153,7 +157,7 @@ class Board:
     def __str__(self):
         board_string = ""
         for i in range(self.size):
-            row = (self.square(i, j).tile for j in range(self.size))
+            row = (self.square(i, j).show_tile() for j in range(self.size))
             row_string = "  ".join(tile if tile else "-" for tile in row)
             board_string = board_string + row_string + "\n"
         return board_string
@@ -165,8 +169,12 @@ class Board:
         index = row * self.size + col
         return self._board[index] if index < self.size * self.size else None
 
-    def place_word(self, start_coordinate, word, direction):
-        """puts a word on the board"""
+    def place_word(self, move):
+        """play a move on the board"""
+
+        start_coordinate = move.start_square
+        direction = move.direction
+        word = move.word
 
         end_coordinate = self.offset(start_coordinate, direction, len(word))
         if any(index > self.size for index in end_coordinate):
@@ -176,8 +184,11 @@ class Board:
         offset = 0
         word = word.upper()
         try:
-            for char in word:
-                self.square(*coordinate).tile = char
+            for pos, char in enumerate(word):
+                square = self.square(*coordinate)
+                if not square.tile:
+                    square.tile = char
+                    square._joker = pos in move.joker
                 offset = offset + 1
                 coordinate = self.offset(start_coordinate, direction, offset)
         except errors.IllegalMoveError:
@@ -260,12 +271,18 @@ class Board:
             effects_ = []
             word_score_ = 0
             cross_score_ = 0
+            joker = []
             for pos_, letter_ in enumerate(word_):
                 pos = pos_ + offset_
                 coordinate_ = self.offset(anchor, direction, pos)
-                tile_score = tile_set[letter_] if pos not in wild_cards_ else 0
+                if pos not in wild_cards_:
+                    tile_score = tile_set[letter_]
+                else:
+                    tile_score = 0
+                    joker.append(pos_)
+                square = self.square(*coordinate_)
                 if pos in new_tile_register_:
-                    effect = self.square(*coordinate_).effect
+                    effect = square.effect
                     if effect == SquareEffect.DL:
                         tile_score = tile_score * 2
                     elif effect == SquareEffect.TL:
@@ -273,6 +290,10 @@ class Board:
                     elif effect in [SquareEffect.DW, SquareEffect.TW]:
                         effects_.append(effect)
                     cross_score_ = cross_score_ + cross_score(tile_score, coordinate_, effect)
+                else:  # tile already on the board
+                    if square.joker:
+                        tile_score = 0
+                        joker.append(pos_)
                 word_score_ = word_score_ + tile_score
             for effect_ in effects_:
                 if effect_ == SquareEffect.TW:
@@ -282,7 +303,7 @@ class Board:
             if not current_rack_:
                 bingo_bonus = 50 if self.board_type == "scrabble" else 35
                 word_score_ = word_score_ + bingo_bonus
-            plays.append(Move(word_, start_square, direction, word_score_ + cross_score_))
+            plays.append(Move(word_, start_square, direction, word_score_ + cross_score_, joker))
 
         def cross_score(tile_score_, coordinate_, effect_):
 
@@ -298,13 +319,13 @@ class Board:
             while current_square_ != coordinate_:
                 # go from top down
                 tile_ = self.square(*current_square_).tile
-                word_score_ = word_score_ + tile_set[tile_]
+                word_score_ += tile_set[tile_] * (not self.square(*current_square_).joker)
                 current_square_ = self.offset(current_square_, other_direction, 1)
             current_square_ = bottom
             while current_square_ != coordinate_:
                 # go from bottom up
                 tile_ = self.square(*current_square_).tile
-                word_score_ = word_score_ + tile_set[tile_]
+                word_score_ += tile_set[tile_] * (not self.square(*current_square_).joker)
                 current_square_ = self.offset(current_square_, other_direction, -1)
 
             if effect_ == SquareEffect.TW:
@@ -444,15 +465,16 @@ class Square:
         _tile: the tile occupying this square
         _cross_set: the set of letters that can form valid crosswords
         _effect: score multiplier if present
-
+        _joker: if the tile is a blank tile or not
     """
 
-    __slots__ = "_cross_set", "_tile", "_effect"
+    __slots__ = "_cross_set", "_tile", "_effect", "_joker"
 
     def __init__(self):
         self._tile = None
         self._effect = SquareEffect.NULL
         self._cross_set = {'down': set(string.ascii_uppercase), 'across': set(string.ascii_uppercase)}
+        self._joker = False
 
     @property
     def tile(self):
@@ -465,6 +487,17 @@ class Square:
         if char < 'A' or char > 'Z':
             raise errors.IllegalMoveError("illegal move! Letter placed must be in the alphabet")
         self._tile = char
+
+    @property
+    def joker(self):
+        return self._joker
+
+    @joker.setter
+    def joker(self, joker):
+        self._joker = joker
+
+    def show_tile(self):
+        return self._tile.lower() if self.joker else self._tile
 
     def remove_tile(self):
         self._tile = None
@@ -487,17 +520,29 @@ class Square:
 class Move(object):
     """A data structure that represents a move"""
 
-    __slots__ = 'word', 'start_square', 'direction', 'score'
+    __slots__ = 'word', 'start_square', 'direction', 'score', 'joker'
 
-    def __init__(self, word, start_square, direction, score):
+    def __init__(self, word, start_square, direction, score, joker):
         self.word = word
         self.start_square = start_square
         self.direction = direction
         self.score = score
+        self.joker = joker  # list of blank tile(s) position in the word
 
     def __str__(self):
         return "Play \"{}\" {} from {} to get {} points.".format(
-            self.word, self.direction, self.start_square, self.score)
+            self.show_word(), self.direction, self.start_square, self.score)
+
+    def show_word(self):
+        # joker in lower case
+        word = self.word.upper()
+        if self.joker:
+            for pos in self.joker:
+                if -1 < pos < len(word)-1:
+                    word = word[:pos] + word[pos].lower() + word[pos + 1:]
+                elif pos == len(word)-1:
+                    word = word[:pos] + word[pos].lower()
+        return word
 
 
 class SquareEffect(Enum):
